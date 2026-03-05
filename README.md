@@ -1,25 +1,65 @@
-[![Discord](https://discordapp.com/api/guilds/929141809769226271/widget.png)](https://discord.gg/trK6sYdcNE) <!--- [![Build Status]  (https://build.torchapi.com/job/Torch/job/master/badge/icon)](https://build.torchapi.com/job/Torch/job/master/) -->
+Torch Fork Fixes — yankeevader/Torch
 
-# What is Torch?
-Torch is the successor to SE Server Extender and gives server admins the tools they need to keep their Space Engineers servers running smoothly. It features a user interface with live management tools and a plugin system so you can run your server exactly how you'd like. Torch is still in early development so there may be bugs and incomplete features.
+1. NLog Double Console Logging — Rule Ordering Bug
+File: Torch.Server/NLog.config
+The Keen Info rule was missing final="true", causing Keen Info messages to match both the Keen rule AND the wildcard * rule, printing to console twice. Adding final="true" to the Keen Info rule stops processing after it's handled.
+xml<!-- Before -->
+<logger name="Keen" minlevel="Info" writeTo="console, wpf"/>
 
-## Torch.Server
+<!-- After -->
+<logger name="Keen" minlevel="Info" writeTo="console, wpf" final="true"/>
 
-### Features
-* WPF-based user interface
-* Chat: interact with the game chat and run commands without having to join the game.
-* Entity manager: realtime modification of ingame entities such as stopping grids and changing block settings without having to join the game
-* Organized, easy to use configuration editor
-* Extensible using the Torch plugin system
+2. NLog Config Overwrite on Update
+File: Torch/TorchConfig.cs
+OverwriteGlobalNLogConfigOnUpdate defaults to true, meaning every Torch update pulled from the Jenkins/upstream release would overwrite the user's NLog.config with the unfixed version, silently re-introducing the double logging bug. Temporarily defaulting to false prevents this until the upstream NLog.config is corrected.
+csharp// Before
+public bool OverwriteGlobalNLogConfigOnUpdate { get; set; } = true;
 
-### Installation
+// After
+public bool OverwriteGlobalNLogConfigOnUpdate { get; set; } = false;
 
-* Get the latest Torch release here: https://build.torchapi.com/job/Torch/job/master/lastSuccessfulBuild/artifact/bin/torch-server.zip
-* Unzip the Torch release into its own directory and run the executable. It will automatically download the SE DS and generate the other necessary files.
-  - If you already have a DS installed you can unzip the Torch files into the folder that contains the DedicatedServer64 folder.
+3. Runtime Console Rule Injection
+File: Torch.Server/Initializer.cs ~line 67
+Removed the #if !DEBUG block that dynamically added a second console rule at runtime, doubling all output regardless of NLog.config.
+csharp// Removed:
+LogManager.Configuration.AddRule(LogLevel.Info, LogLevel.Fatal, "console");
+LogManager.ReconfigExistingLoggers();
 
-# Building
-To build Torch you must first have a complete SE Dedicated installation somewhere. Before you open the solution, run the Setup batch file and enter the path of that installation's DedicatedServer64 folder. The script will make a symlink to that folder so the Torch solution can find the DLL references it needs.
+4. SteamCMD Premature Exit
+File: Torch.Server/Initializer.cs ~lines 250-290
+Replaced the while (!cmd.HasExited) loop with a proper null-check ReadLine pattern plus WaitForExit(). The old loop exited when stdout closed during long downloads, causing Torch to crash mid-install.
+csharp// Before
+while (!cmd.HasExited)
+{
+    log.Info(cmd.StandardOutput.ReadLine());
+    Thread.Sleep(100);
+}
 
-If you have a more enjoyable server experience because of Torch, please consider supporting us on Patreon. (https://www.patreon.com/TorchSE)
+// After
+string line;
+while ((line = cmd.StandardOutput.ReadLine()) != null)
+{
+    log.Info(line);
+}
+cmd.WaitForExit();
+Applied to both the init run and the update run loops.
 
+5. steam_api64.dll Copy Crash on Fresh Install
+File: Torch.Server/Initializer.cs ~line 90
+Wrapped the DLL copy in a File.Exists() guard so a fresh install doesn't crash when DedicatedServer64 doesn't exist yet.
+csharp// Before
+File.Copy(apiSource, apiTarget);
+
+// After
+if (File.Exists(apiSource))
+{
+    if (!File.Exists(apiTarget))
+        File.Copy(apiSource, apiTarget);
+    else if (File.GetLastWriteTime(apiTarget) < File.GetLastWriteTime(apiSource))
+    {
+        File.Delete(apiTarget);
+        File.Copy(apiSource, apiTarget);
+    }
+}
+
+Net Result: Fresh installs complete the full 7.9 GB SE download without crashing, SE 1.208.15 loads correctly, console logging is clean, and the fix survives Torch updates.
