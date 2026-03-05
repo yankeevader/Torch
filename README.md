@@ -149,3 +149,6 @@ if (File.Exists(apiSource))
 - SE 1.208.15 loads correctly
 - Console logging is clean (no duplicate lines)
 - Fixes survive Torch self-updates
+
+SIDE NOTE:  Delete - SteamCMD, steamapps, and DedicatedServer64 if updating an existing server.
+this is not intended for public use so use at your own risk! - Yankee ~
