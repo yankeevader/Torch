@@ -37,7 +37,7 @@ namespace Torch.Server
         private static readonly string STEAMCMD_PATH = $"{STEAMCMD_DIR}\\steamcmd.exe";
         private static readonly string RUNSCRIPT_PATH = $"{STEAMCMD_DIR}\\runscript.txt";
 
-        private string RUNSCRIPT => $@"force_install_dir {Directory.GetCurrentDirectory()}
+        private static string RUNSCRIPT => $@"force_install_dir {Directory.GetCurrentDirectory()}
 login anonymous
 app_update 298740
 quit";
