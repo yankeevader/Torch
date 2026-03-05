@@ -3,6 +3,7 @@
 ## Summary
 
 This fork addresses several bugs affecting fresh installs and console logging behavior, all present in the upstream TorchAPI/Torch codebase.
+NOTE: I mostly made this for myself to fix my 10 Nexus servers stuck on 1.207, I assume I havent followed proper methods for passing this on to Torch proper so here it sits.
 
 ---
 
