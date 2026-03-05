@@ -1,34 +1,76 @@
-Torch Fork Fixes — yankeevader/Torch
+# Torch Fork Fixes — yankeevader/Torch
 
-1. NLog Double Console Logging — Rule Ordering Bug
-File: Torch.Server/NLog.config
-The Keen Info rule was missing final="true", causing Keen Info messages to match both the Keen rule AND the wildcard * rule, printing to console twice.
-xml<!-- Before -->
+## Summary
+
+This fork addresses several bugs affecting fresh installs and console logging behavior, all present in the upstream TorchAPI/Torch codebase.
+
+---
+
+## Fix 1 — NLog Double Console Logging (Rule Ordering)
+
+**File:** `Torch.Server/NLog.config`
+
+The Keen Info rule was missing `final="true"`, causing Keen Info messages to match both the Keen-specific rule **and** the wildcard `*` rule, resulting in every line printing to the console twice.
+
+```xml
+<!-- Before -->
 <logger name="Keen" minlevel="Info" writeTo="console, wpf"/>
 
 <!-- After -->
 <logger name="Keen" minlevel="Info" writeTo="console, wpf" final="true"/>
+```
 
-2. Runtime Console Rule Injection
-File: Torch.Server/Initializer.cs ~line 67
-A #if !DEBUG block dynamically added a second console rule at runtime after NLog.config was already loaded, doubling all console output regardless of NLog.config settings.
-csharp// Removed:
+---
+
+## Fix 2 — Runtime Console Rule Injection
+
+**File:** `Torch.Server/Initializer.cs` (~line 67)
+
+A `#if !DEBUG` block dynamically added a second console logging rule at runtime, **after** `NLog.config` was already loaded. This doubled all console output regardless of what was configured in `NLog.config`.
+
+```csharp
+// Removed from the #if !DEBUG block:
 LogManager.Configuration.AddRule(LogLevel.Info, LogLevel.Fatal, "console");
 LogManager.ReconfigExistingLoggers();
 
-3. NLog Config Overwrite on Torch Update
-File: Torch/TorchConfig.cs
-OverwriteGlobalNLogConfigOnUpdate defaults to true, meaning every Torch self-update pulled from the upstream Jenkins release overwrites the user's NLog.config with the unfixed upstream version, silently re-introducing the double logging bug. Defaulting to false prevents this until upstream fixes their NLog.config.
-csharp// Before
+// Kept:
+#if !DEBUG
+    AppDomain.CurrentDomain.UnhandledException += HandleException;
+#endif
+```
+
+---
+
+## Fix 3 — NLog Config Overwritten on Torch Self-Update
+
+**File:** `Torch/TorchConfig.cs`
+
+`OverwriteGlobalNLogConfigOnUpdate` defaulted to `true`, meaning every Torch self-update pulled from the upstream Jenkins release would silently overwrite the local `NLog.config` with the upstream unfixed version, re-introducing the double logging bug on every update.
+
+Changed the default to `false` so the corrected `NLog.config` survives updates.
+
+```csharp
+// Before
 public bool OverwriteGlobalNLogConfigOnUpdate { get; set; } = true;
 
 // After
 public bool OverwriteGlobalNLogConfigOnUpdate { get; set; } = false;
+```
 
-4. SteamCMD Runscript Path Bug (../../)
-File: Torch.Server/Initializer.cs ~line 37
-The RUNSCRIPT property used a relative path (../../) for force_install_dir which resolved incorrectly depending on working directory, causing SteamCMD to install SE to the wrong location or fail entirely. Fixed by using Directory.GetCurrentDirectory() for an absolute path.
-csharp// Before
+> **Note:** The existing description in code warns against changing this, which is sound advice for end users modifying an unknown config. However, since this fork ships with a corrected `NLog.config`, overwriting it with the upstream broken version is the wrong default behavior here.
+
+---
+
+## Fix 4 — SteamCMD Runscript Incorrect Relative Path
+
+**File:** `Torch.Server/Initializer.cs` (~line 37)
+
+The `RUNSCRIPT` property used a relative `../../` path for `force_install_dir`, which resolved incorrectly depending on the working directory at runtime. This caused SteamCMD to install Space Engineers to the wrong location or fail entirely.
+
+Fixed by using `Directory.GetCurrentDirectory()` to produce an absolute path.
+
+```csharp
+// Before
 private static string RUNSCRIPT => $@"force_install_dir ../../
 login anonymous
 app_update 298740
@@ -39,11 +81,20 @@ private static string RUNSCRIPT => $@"force_install_dir {Directory.GetCurrentDir
 login anonymous
 app_update 298740
 quit";
+```
 
-5. SteamCMD Premature Exit During Long Downloads
-File: Torch.Server/Initializer.cs ~lines 250-290
-The while (!cmd.HasExited) loop exited prematurely when stdout closed mid-download (common during large downloads), causing Torch to continue executing before SE finished downloading. Applied to both the init run and the update run loops.
-csharp// Before
+---
+
+## Fix 5 — SteamCMD Premature Exit During Large Downloads
+
+**File:** `Torch.Server/Initializer.cs` (~lines 250–290)
+
+The stdout read loop used `while (!cmd.HasExited)` with `ReadLine()` and `Thread.Sleep(100)`. During large downloads (SE is ~7.9 GB), the stdout stream closes or disconnects before the process actually exits. When `ReadLine()` returns `null` in this state, the loop condition still passes and Torch continues executing before SteamCMD has finished.
+
+Fixed by replacing both loops (init run and update run) with a null-check `ReadLine()` pattern followed by `WaitForExit()`.
+
+```csharp
+// Before
 while (!cmd.HasExited)
 {
     log.Info(cmd.StandardOutput.ReadLine());
@@ -57,22 +108,42 @@ while ((line = cmd.StandardOutput.ReadLine()) != null)
     log.Info(line);
 }
 cmd.WaitForExit();
+```
 
-6. steam_api64.dll Copy Crash on Fresh Install
-File: Torch.Server/Initializer.cs ~line 90
-The DLL copy had no existence check, so on a fresh install where DedicatedServer64 didn't exist yet, it threw a FileNotFoundException and crashed silently before the unhandled exception handler was fully wired.
-csharp// Before
+Applied to both the **SteamCMD init run** and the **DS update run** loops.
+
+---
+
+## Fix 6 — `steam_api64.dll` Copy Crash on Fresh Install
+
+**File:** `Torch.Server/Initializer.cs` (~line 90)
+
+The `steam_api64.dll` copy had no existence guard. On a fresh install where `DedicatedServer64` does not yet exist (because SteamCMD hasn't finished downloading SE), `File.Copy()` threw a `FileNotFoundException`. This exception occurred before the unhandled exception handler was fully wired, causing Torch to crash silently with no useful log output.
+
+```csharp
+// Before
 File.Copy(apiSource, apiTarget);
 
 // After
 if (File.Exists(apiSource))
 {
     if (!File.Exists(apiTarget))
+    {
         File.Copy(apiSource, apiTarget);
+    }
     else if (File.GetLastWriteTime(apiTarget) < File.GetLastWriteTime(apiSource))
     {
         File.Delete(apiTarget);
         File.Copy(apiSource, apiTarget);
     }
 }
-NOTE:  Delete steamapps,  steamcmd, and DedicatedServer64. this forces a redownload of SteamCMD, and Space Engineers Dedicated Server.
+```
+
+---
+
+## Net Result
+
+- Fresh installs complete the full ~7.9 GB SE download without crashing
+- SE 1.208.15 loads correctly
+- Console logging is clean (no duplicate lines)
+- Fixes survive Torch self-updates
