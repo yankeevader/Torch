@@ -63,3 +63,6 @@ if (File.Exists(apiSource))
 }
 
 Net Result: Fresh installs complete the full 7.9 GB SE download without crashing, SE 1.208.15 loads correctly, console logging is clean, and the fix survives Torch updates.
+Torch was stuck on 1.207.22
+Attempting to update using the standard Torch release failed.
+NOTE:  Delete steamapps,  steamcmd, and DedicatedServer64. this forces a redownload of SteamCMD, and Space Engineers Dedicated Server.
