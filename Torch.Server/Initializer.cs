@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -63,7 +63,7 @@ quit";
             // the !Debug is called before nlog has loaded so we force it.
             var config = new NLog.Config.XmlLoggingConfiguration("NLog.config", true);
             LogManager.Configuration = config;
-            
+
 #if !DEBUG
             AppDomain.CurrentDomain.UnhandledException += HandleException;
 #endif
@@ -86,16 +86,20 @@ quit";
             var apiSource = Path.Combine(basePath, "DedicatedServer64", "steam_api64.dll");
             var apiTarget = Path.Combine(basePath, "steam_api64.dll");
 
-            if (!File.Exists(apiTarget))
+            // FIX: Guard against DedicatedServer64 not existing yet on a fresh install
+            // where SteamCMD hasn't finished downloading SE yet.
+            if (File.Exists(apiSource))
             {
-                File.Copy(apiSource, apiTarget);
+                if (!File.Exists(apiTarget))
+                {
+                    File.Copy(apiSource, apiTarget);
+                }
+                else if (File.GetLastWriteTime(apiTarget) < File.GetLastWriteTime(apiSource))
+                {
+                    File.Delete(apiTarget);
+                    File.Copy(apiSource, apiTarget);
+                }
             }
-            else if (File.GetLastWriteTime(apiTarget) < File.GetLastWriteTime(apiSource))
-            {
-                File.Delete(apiTarget);
-                File.Copy(apiSource, apiTarget);
-            }
-
 
             InitConfig();
             if (!Config.Parse(args))
@@ -163,7 +167,7 @@ quit";
                     NativeMethods.FreeConsole();
                 }
 #endif
-                
+
                 var gameThread = new Thread(() =>
                 {
                     _server.Init();
@@ -174,9 +178,9 @@ quit";
                         _server.Start();
                     }
                 });
-                
+
                 gameThread.Start();
-                
+
                 var ui = new TorchUI(_server);
                 ui.ShowDialog();
             }
@@ -241,11 +245,16 @@ quit";
                         StandardOutputEncoding = Encoding.ASCII
                     };
                     var initCmd = Process.Start(initProc);
-                    while (!initCmd.HasExited)
+
+                    // FIX: Use ReadLine() loop that exits cleanly when stream ends,
+                    // then WaitForExit() to ensure process is fully done.
+                    string initLine;
+                    while ((initLine = initCmd.StandardOutput.ReadLine()) != null)
                     {
-                        log.Info(initCmd.StandardOutput.ReadLine());
-                        Thread.Sleep(100);
+                        log.Info(initLine);
                     }
+                    initCmd.WaitForExit();
+
                     log.Info("SteamCMD initialization complete.");
                 }
                 catch (Exception e)
@@ -265,13 +274,16 @@ quit";
                 StandardOutputEncoding = Encoding.ASCII
             };
             var cmd = Process.Start(steamCmdProc);
-            
-            // ReSharper disable once PossibleNullReferenceException
-            while (!cmd.HasExited)
+
+            // FIX: Use ReadLine() loop that exits cleanly when stream ends,
+            // then WaitForExit() to ensure process is fully done before continuing.
+            string line;
+            while ((line = cmd.StandardOutput.ReadLine()) != null)
             {
-                log.Info(cmd.StandardOutput.ReadLine());
-                Thread.Sleep(100);
+                log.Info(line);
             }
+            cmd.WaitForExit();
+
             log.Info("SteamCMD update check complete.");
         }
 
@@ -309,9 +321,9 @@ quit";
 
                 return;
             }
-            
+
             Log.Fatal(ex);
-            
+
             if (ex is ReflectionTypeLoadException extl)
             {
                 foreach (var exl in extl.LoaderExceptions)
@@ -319,7 +331,7 @@ quit";
 
                 return;
             }
-            
+
             if (ex.InnerException != null)
             {
                 LogException(ex.InnerException);
@@ -330,7 +342,7 @@ quit";
         {
             var shortdate = DateTime.Now.ToString("yyyy-MM-dd");
             var shortdateWithTime = DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
-            
+
             var dumpPath = $"Logs\\MiniDumpT{Thread.CurrentThread.ManagedThreadId}-{shortdateWithTime}.dmp";
             Log.Info($"Generating minidump at {dumpPath}");
             var dumpFlags = MyMiniDump.Options.Normal | MyMiniDump.Options.WithProcessThreadData | MyMiniDump.Options.WithThreadInfo;
@@ -341,13 +353,13 @@ quit";
                 List<string> additionalFiles = new List<string>();
                 if (File.Exists(dumpPath))
                     additionalFiles.Add(dumpPath);
-                
+
                 CrashInfo info = MyErrorReporter.BuildCrashInfo();
                 MyErrorReporter.ReportNotInteractive($"Logs\\Keen-{shortdate}.log", info.AnalyticId, false,
                     additionalFiles.ToList(), true, string.Empty, string.Empty, info);
             }
-            
-            if(Config.DeleteMiniDumps)
+
+            if (Config.DeleteMiniDumps)
                 File.Delete(dumpPath);
         }
 
