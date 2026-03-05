@@ -151,4 +151,13 @@ if (File.Exists(apiSource))
 - Fixes survive Torch self-updates
 
 SIDE NOTE:  Delete - SteamCMD, steamapps, and DedicatedServer64 if updating an existing server.
+Also you only need 5 files if updating an existing server
+
+NLog.config
+NLog-user.config
+Torch.API.dll
+Torch.dll
+Torch.Server.exe
+
+Overwrite the existing files and run Torch.Server.Exe
 this is not intended for public use so use at your own risk! - Yankee ~
